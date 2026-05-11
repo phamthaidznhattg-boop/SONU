@@ -1,0 +1,745 @@
+local mt = getrawmetatable(game)
+local rawNamecall = mt.__namecall
+local rawIndex = mt.__index
+local rawNewIndex = mt.__newindex
+local env = getfenv(0)
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local cmt = getrawmetatable(game)
+        if cmt.__namecall ~= rawNamecall then kill() break end
+        if cmt.__index ~= rawIndex then kill() break end
+        if cmt.__newindex ~= rawNewIndex then kill() break end
+        if getfenv(0) ~= env then kill() break end
+    end
+end)
+
+if not game:IsLoaded() then
+    repeat task.wait() until game:IsLoaded()
+end
+
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- UI Library (WindUI)
+local WindUI = loadstring(game:HttpGet(
+    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+))()
+
+local Window = WindUI:CreateWindow({
+    Title = "LDT | Universal",
+    Icon = "rbxassetid://129413529809942",
+    Author = "LDT ON TOP",
+    Folder = "kedienyeuem27",
+    Size = UDim2.fromOffset(480, 500),
+    MinSize = Vector2.new(560, 350),
+    MaxSize = Vector2.new(850, 560),
+    Transparent = true,
+    Theme = "Dark",
+    Resizable = true,
+    SideBarWidth = 200,
+    HideSearchBar = false,
+    User = {
+        Enabled = true,
+        Name = LocalPlayer.Name,
+        Image = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId,
+    }
+})
+
+Window:Tag({
+    Title = "Universal v1.0",
+    Icon = "github",
+    Color = Color3.fromHex("#33CC00")
+})
+
+-- Tabs
+local CombatTab = Window:Tab({Title = "Combat", Icon = "sword"})
+local EspTab = Window:Tab({Title = "ESP", Icon = "eye"})
+local MiscTab = Window:Tab({Title = "Hỗ Trợ", Icon = "cog"})
+
+-- ========== MISC VARIABLES ==========
+local InfStamina = false
+local InstantInteract = false
+local CamNoclip = false
+local originalDurations = {}
+
+-- ========== MISC FUNCTIONS ==========
+local function ApplyInstant(obj)
+    if obj:IsA("ProximityPrompt") then
+        if not originalDurations[obj] then
+            originalDurations[obj] = obj.HoldDuration
+        end
+        obj.HoldDuration = InstantInteract and 0 or (originalDurations[obj] or 0)
+    end
+end
+
+workspace.DescendantAdded:Connect(ApplyInstant)
+for _, obj in pairs(workspace:GetDescendants()) do
+    ApplyInstant(obj)
+end
+
+-- ========== SILENT AIM 100% CHÍNH XÁC ==========
+local SilentAimEnabled = false
+local SelectedBodyPart = "Head"
+local BodyPartOptions = {"Head", "HumanoidRootPart"}
+local MaxDistance = 1000000
+
+-- Danh sách tên không bao giờ aim
+local NeverAimNames = {"khangggggggggg646"}
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Radius = 150
+FOVCircle.Thickness = 0.5
+FOVCircle.Filled = false
+FOVCircle.Color = Color3.fromRGB(255,0,0)
+FOVCircle.Visible = false
+
+local ShowFov = false
+
+local tracerLine = Drawing.new("Line")
+tracerLine.Color = Color3.fromRGB(255,0,0)
+tracerLine.Thickness = 2
+tracerLine.Visible = false
+
+local currentTarget = nil
+local targetPart = nil
+
+local function GetTargetPart(character)
+    if not character then return nil end
+    if SelectedBodyPart == "Head" then
+        return character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    else
+        return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head")
+    end
+end
+
+local function IsNeverAim(player)
+    if not player then return false end
+    for _, name in ipairs(NeverAimNames) do
+        if player.Name == name then
+            return true
+        end
+    end
+    return false
+end
+
+local function GetClosestTarget()
+    local closest = nil
+    local shortest = math.huge
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        if IsNeverAim(player) then continue end -- Bỏ qua nếu tên trong danh sách
+        
+        local character = player.Character
+        if not character then continue end
+        
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then continue end
+        
+        local part = GetTargetPart(character)
+        if not part then continue end
+
+        local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+        if not onScreen then continue end
+
+        local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+        
+        if ShowFov then
+            if dist < FOVCircle.Radius and dist < shortest then
+                shortest = dist
+                closest = player
+                targetPart = part
+            end
+        else
+            if dist < shortest then
+                shortest = dist
+                closest = player
+                targetPart = part
+            end
+        end
+    end
+    
+    return closest
+end
+
+-- HOOK RAYCAST
+local oldNameCall
+oldNameCall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    if SilentAimEnabled and method == "Raycast" and self == Workspace and not checkcaller() then
+        if currentTarget and currentTarget.Character and targetPart and targetPart.Parent and not IsNeverAim(currentTarget) then
+            local origin = args[1]
+            local direction = (targetPart.Position - origin).Unit * MaxDistance
+            args[2] = direction
+            return oldNameCall(self, unpack(args))
+        end
+    end
+    
+    return oldNameCall(self, ...)
+end))
+
+-- HOOK FIRESERVER
+local function FindSendRemote()
+    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+        if v:IsA("RemoteEvent") and (v.Name:lower():find("send") or v.Name:lower():find("shoot") or v.Name:lower():find("fire") or v.Name:lower():find("bullet")) then
+            return v
+        end
+    end
+    return nil
+end
+
+local send = FindSendRemote()
+local oldFire
+
+if send then
+    oldFire = hookfunction(send.FireServer, function(self, ...)
+        local args = {...}
+
+        if SilentAimEnabled and currentTarget and currentTarget.Character and targetPart and targetPart.Parent and not IsNeverAim(currentTarget) then
+            local myHead = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+            local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local origin = myHead or myRoot
+            
+            if origin then
+                for i, v in pairs(args) do
+                    if typeof(v) == "table" then
+                        for j, bullet in pairs(v) do
+                            if typeof(bullet) == "table" then
+                                if bullet.Instance then
+                                    bullet.Instance = targetPart
+                                end
+                                if bullet.Position then
+                                    bullet.Position = targetPart.Position
+                                end
+                                if bullet.Velocity then
+                                    bullet.Velocity = Vector3.zero
+                                end
+                                if bullet.Direction then
+                                    bullet.Direction = (targetPart.Position - origin.Position).Unit
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                for i, v in pairs(args) do
+                    if typeof(v) == "CFrame" then
+                        args[i] = CFrame.lookAt(origin.Position, targetPart.Position)
+                    end
+                end
+                
+                for i, v in pairs(args) do
+                    if typeof(v) == "Vector3" and i > 1 then
+                        args[i] = targetPart.Position
+                    end
+                end
+            end
+        end
+
+        return oldFire(self, unpack(args))
+    end)
+end
+
+RunService.RenderStepped:Connect(function()
+    if SilentAimEnabled then
+        currentTarget = GetClosestTarget()
+    else
+        currentTarget = nil
+        targetPart = nil
+    end
+    
+    FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    FOVCircle.Visible = ShowFov
+    
+    if SilentAimEnabled and currentTarget and currentTarget.Character and targetPart and targetPart.Parent and not IsNeverAim(currentTarget) then
+        local screen, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+        if onScreen then
+            tracerLine.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+            tracerLine.To = Vector2.new(screen.X, screen.Y)
+            tracerLine.Visible = true
+        else
+            tracerLine.Visible = false
+        end
+    else
+        tracerLine.Visible = false
+    end
+    
+    local char = LocalPlayer.Character
+    if char then
+        if InfStamina then
+            char:SetAttribute("Stamina", 120)
+        end
+        
+        if CamNoclip then
+            LocalPlayer.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
+        else
+            LocalPlayer.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Zoom
+        end
+    end
+end)
+
+-- ========== ESP ==========
+local ESPs = {}
+local ShowESP = false
+local EspShowName = false
+local EspShowHealth = false
+local EspChams = false
+local PlayerNameLabels = {}
+local PlayerHealthBars = {}
+
+local function NewBox()
+    local box = {Lines={}}
+    for i=1,12 do
+        local line = Drawing.new("Line")
+        line.Color = Color3.fromRGB(255,255,255)
+        line.Thickness = 1.9
+        line.Visible = false
+        table.insert(box.Lines, line)
+    end
+    function box:Remove()
+        for _, l in ipairs(self.Lines) do
+            if l then pcall(function() l:Remove() end) end
+        end
+    end
+    return box
+end
+
+local function SetupPlayerESP(player)
+    if player == LocalPlayer then return end
+    if ESPs[player] then return end
+    
+    local entry = {box = NewBox(), char = player.Character, chams = nil}
+    
+    local chams = Instance.new("Highlight")
+    chams.Name = "Chams"
+    chams.FillColor = Color3.fromRGB(255, 0, 0)
+    chams.OutlineColor = Color3.fromRGB(255, 255, 255)
+    chams.FillTransparency = 0.5
+    chams.OutlineTransparency = 0
+    chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    chams.Enabled = false
+    
+    entry.chams = chams
+    ESPs[player] = entry
+    
+    player.CharacterAdded:Connect(function(char)
+        entry.char = char
+    end)
+    
+    player.CharacterRemoving:Connect(function()
+        entry.char = nil
+        for _, l in ipairs(entry.box.Lines) do l.Visible = false end
+        if entry.chams then
+            entry.chams.Enabled = false
+            entry.chams.Parent = nil
+        end
+        if PlayerNameLabels[player] then PlayerNameLabels[player].Visible = false end
+        if PlayerHealthBars[player] then PlayerHealthBars[player].Visible = false end
+    end)
+end
+
+local function CleanupPlayerESP(player)
+    if ESPs[player] then
+        ESPs[player].box:Remove()
+        if ESPs[player].chams then
+            ESPs[player].chams:Destroy()
+        end
+        ESPs[player] = nil
+    end
+    if PlayerNameLabels[player] then PlayerNameLabels[player]:Remove(); PlayerNameLabels[player]=nil end
+    if PlayerHealthBars[player] then PlayerHealthBars[player]:Remove(); PlayerHealthBars[player]=nil end
+end
+
+for _, p in ipairs(Players:GetPlayers()) do SetupPlayerESP(p) end
+Players.PlayerAdded:Connect(SetupPlayerESP)
+Players.PlayerRemoving:Connect(CleanupPlayerESP)
+
+-- ========== BUILD UI ==========
+
+-- Combat Tab
+CombatTab:Section({Title = "Silent Aim", Opened = true})
+
+CombatTab:Toggle({
+    Title = "Silent Aim",
+    Default = false,
+    Callback = function(v)
+        SilentAimEnabled = v
+    end
+})
+
+CombatTab:Toggle({
+    Title = "Show FOV",
+    Default = false,
+    Callback = function(state)
+        ShowFov = state
+        FOVCircle.Visible = state
+    end
+})
+
+CombatTab:Slider({
+    Title = "FOV Radius",
+    Step = 1,
+    Value = {Min = 50, Max = 500, Default = 150},
+    Callback = function(value)
+        FOVCircle.Radius = tonumber(value)
+    end
+})
+
+CombatTab:Section({Title = "Body Part", Opened = true})
+
+CombatTab:Dropdown({
+    Title = "Target Body Part",
+    Desc = "Chọn bộ phận",
+    Values = BodyPartOptions,
+    Value = "Head",
+    Callback = function(option)
+        SelectedBodyPart = option
+    end
+})
+
+-- ESP Tab
+EspTab:Section({Title = "ESP", Opened = true})
+
+EspTab:Toggle({
+    Title = "Eps Box",
+    Default = false,
+    Callback = function(state)
+        ShowESP = state
+        if not state then
+            for _, entry in pairs(ESPs) do
+                for _, l in ipairs(entry.box.Lines) do l.Visible = false end
+            end
+        end
+    end
+})
+
+EspTab:Toggle({
+    Title = "Eps chams",
+    Desc = "",
+    Default = false,
+    Callback = function(state)
+        EspChams = state
+        for player, entry in pairs(ESPs) do
+            if entry.chams then
+                if state and player.Character and player.Character.PrimaryPart then
+                    entry.chams.Parent = player.Character
+                    entry.chams.Enabled = true
+                else
+                    entry.chams.Enabled = false
+                    entry.chams.Parent = nil
+                end
+            end
+        end
+    end
+})
+
+EspTab:Toggle({
+    Title = "Eps Name",
+    Default = false,
+    Callback = function(state)
+        EspShowName = state
+        if not state then
+            for _, t in pairs(PlayerNameLabels) do t.Visible = false end
+        end
+    end
+})
+
+EspTab:Toggle({
+    Title = "Eps Health",
+    Desc = "",
+    Default = false,
+    Callback = function(state)
+        EspShowHealth = state
+        if not state then
+            for _, b in pairs(PlayerHealthBars) do b.Visible = false end
+        end
+    end
+})
+
+-- Misc Tab
+MiscTab:Section({Title = "Hỗ Trợ", Opened = true})
+
+MiscTab:Toggle({
+    Title = "inf Stamina",
+    Default = false,
+    Callback = function(state)
+        InfStamina = state
+    end
+})
+
+MiscTab:Toggle({
+    Title = "Instant Interact",
+    Desc = "Nhặt Đồ Nhanh",
+    Default = false,
+    Callback = function(state)
+        InstantInteract = state
+        for _, obj in pairs(workspace:GetDescendants()) do
+            ApplyInstant(obj)
+        end
+    end
+})
+
+MiscTab:Toggle({
+    Title = "Camera Noclip",
+    Desc = "Nhìn xuyên tường",
+    Default = false,
+    Callback = function(state)
+        CamNoclip = state
+    end
+})
+
+-- ========== RENDER STEPPED ESP ==========
+RunService.RenderStepped:Connect(function()
+    for player, entry in pairs(ESPs) do
+        if entry.chams and EspChams then
+            if player.Character and player.Character.PrimaryPart then
+                entry.chams.Parent = player.Character
+                entry.chams.Enabled = true
+            else
+                entry.chams.Enabled = false
+                entry.chams.Parent = nil
+            end
+        end
+    end
+    
+    for player, entry in pairs(ESPs) do
+        local char = entry.char
+        local box = entry.box
+        if not char then
+            for _, l in ipairs(box.Lines) do l.Visible = false end
+            if PlayerNameLabels[player] then PlayerNameLabels[player].Visible = false end
+            if PlayerHealthBars[player] then PlayerHealthBars[player].Visible = false end
+            continue
+        end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not humanoid or humanoid.Health <= 0 then
+            for _, l in ipairs(box.Lines) do l.Visible = false end
+            if PlayerNameLabels[player] then PlayerNameLabels[player].Visible = false end
+            if PlayerHealthBars[player] then PlayerHealthBars[player].Visible = false end
+            continue
+        end
+
+        local height = humanoid.HipHeight * 2 + hrp.Size.Y
+        local width  = hrp.Size.X * 2 * 1.19
+        local depth  = hrp.Size.Z * 2 * 1.15
+
+        local corners = {
+            Vector3.new(-width/2, -height/2, -depth/2),
+            Vector3.new( width/2, -height/2, -depth/2),
+            Vector3.new( width/2, -height/2,  depth/2),
+            Vector3.new(-width/2, -height/2,  depth/2),
+            Vector3.new(-width/2,  height/2, -depth/2),
+            Vector3.new( width/2,  height/2, -depth/2),
+            Vector3.new( width/2,  height/2,  depth/2),
+            Vector3.new(-width/2,  height/2,  depth/2),
+        }
+
+        local pts = {}
+        local anyOnScreen = false
+        for i, off in ipairs(corners) do
+            local wp = hrp.CFrame:PointToWorldSpace(off)
+            local s, onScreen = Camera:WorldToViewportPoint(wp)
+            pts[i] = Vector2.new(s.X, s.Y)
+            if onScreen then anyOnScreen = true end
+        end
+
+        local isTarget = (player == currentTarget)
+        local color = isTarget and Color3.fromRGB(255,0,0) or Color3.fromRGB(255,255,255)
+
+        if ShowESP and anyOnScreen then
+            local lines = box.Lines
+            for _, line in ipairs(lines) do line.Color = color end
+            local edgeIndex = {
+                {1,2},{2,3},{3,4},{4,1},
+                {5,6},{6,7},{7,8},{8,5},
+                {1,5},{2,6},{3,7},{4,8}
+            }
+            for i, pair in ipairs(edgeIndex) do
+                local l = lines[i]
+                l.From = pts[pair[1]]
+                l.To   = pts[pair[2]]
+                l.Visible = true
+            end
+        else
+            for _, l in ipairs(box.Lines) do l.Visible = false end
+        end
+
+        local topMiddle = Vector2.new(
+            (pts[5].X + pts[6].X + pts[7].X + pts[8].X)/4,
+            (pts[5].Y + pts[6].Y + pts[7].Y + pts[8].Y)/4
+        )
+
+        if EspShowHealth and anyOnScreen then
+            local txt = PlayerHealthBars[player] or Drawing.new("Text")
+            if not PlayerHealthBars[player] then
+                txt.Size = 12
+                txt.Center = true
+                txt.Outline = true
+                txt.OutlineColor = Color3.fromRGB(0,0,0)
+                txt.Font = 3
+                PlayerHealthBars[player] = txt
+            end
+            local ratio = humanoid.Health / humanoid.MaxHealth
+            txt.Text = string.format("[%d/%d]", math.floor(humanoid.Health), math.floor(humanoid.MaxHealth))
+            txt.Color = Color3.fromRGB(255 * (1 - ratio), 255 * ratio, 0)
+            txt.Position = topMiddle + Vector2.new(0, -15)
+            txt.Visible = true
+        elseif PlayerHealthBars[player] then
+            PlayerHealthBars[player].Visible = false
+        end
+
+        if EspShowName and anyOnScreen then
+            local label = PlayerNameLabels[player] or Drawing.new("Text")
+            if not PlayerNameLabels[player] then
+                label.Center = true
+                label.Outline = true
+                label.OutlineColor = Color3.fromRGB(0,0,0)
+                label.Size = 14
+                label.Font = 3
+                PlayerNameLabels[player] = label
+            end
+            label.Text = player.Name
+            label.Position = topMiddle + Vector2.new(0, -28)
+            label.Color = color
+            label.Visible = true
+        elseif PlayerNameLabels[player] then
+            PlayerNameLabels[player].Visible = false
+        end
+    end
+end)
+
+-- Toggle Menu với phím T
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.T then
+        Window:Toggle()
+    end
+end)
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local Player = Players.LocalPlayer
+local HealData = {
+    IsHealing = false,
+    SessionID = 0
+}
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Standalone_Heal_System"
+ScreenGui.Parent = CoreGui
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local HealBtn = Instance.new("TextButton")
+HealBtn.Size = UDim2.new(0, 75, 0, 75)
+HealBtn.Position = UDim2.new(0.05, 0, 0.52, 0)
+HealBtn.Text = "HEAL"
+HealBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+HealBtn.TextColor3 = Color3.new(1, 1, 1)
+HealBtn.Font = Enum.Font.SourceSansBold
+HealBtn.TextSize = 10
+HealBtn.Parent = ScreenGui
+
+Instance.new("UICorner", HealBtn).CornerRadius = UDim.new(1, 0)
+local Stroke = Instance.new("UIStroke", HealBtn)
+Stroke.Color = Color3.new(1, 1, 1)
+
+local function makeDraggable(obj)
+    local dragging, dragInput, dragStart, startPos
+    obj.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = obj.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    obj.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            obj.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+makeDraggable(HealBtn)
+
+HealBtn.MouseButton1Click:Connect(function()
+    HealData.IsHealing = not HealData.IsHealing
+    HealData.SessionID = HealData.SessionID + 1
+    local currentSession = HealData.SessionID
+    
+    HealBtn.BackgroundColor3 = HealData.IsHealing and Color3.fromRGB(150, 0, 0) or Color3.fromRGB(0, 0, 0)
+    HealBtn.Text = HealData.IsHealing and "HEAL: ON" or "HEAL"
+    
+    if HealData.IsHealing then
+        task.spawn(function()
+            local char = Player.Character or Player.CharacterAdded:Wait()
+            local toolChangeConn
+            
+            toolChangeConn = char.ChildAdded:Connect(function(child)
+                if child:IsA("Tool") and child.Name ~= "Pizza" and child.Name ~= "Mentos" then
+                    HealData.IsHealing = false
+                end
+            end)
+
+            while HealData.IsHealing and HealData.SessionID == currentSession do
+                local currentCharacter = Player.Character
+                local backpack = Player.Backpack
+                
+                if currentCharacter and backpack then
+                    local humanoid = currentCharacter:FindFirstChild("Humanoid")
+                    local healItems = {}
+                    
+                    for _, item in ipairs(backpack:GetChildren()) do
+                        if item.Name == "Pizza" or item.Name == "Mentos" then
+                            table.insert(healItems, item)
+                        end
+                    end
+
+                    if #healItems > 0 and humanoid and humanoid.Health > 0 then
+                        local comboCount = 0
+                        for i = 1, #healItems do
+                            if not HealData.IsHealing or HealData.SessionID ~= currentSession then break end
+                            
+                            local targetTool = healItems[i]
+                            if targetTool and targetTool.Parent == backpack then
+                                humanoid:EquipTool(targetTool)
+                                targetTool:Activate()
+                                
+                                task.wait((humanoid.Health < 30) and 0.01 or 0.1)
+                                
+                                comboCount = comboCount + 1
+                                if comboCount >= 5 then
+                                    humanoid:UnequipTools()
+                                    task.wait(0.1)
+                                    comboCount = 0
+                                end
+                            end
+                        end
+                    elseif #healItems == 0 then
+                        HealData.IsHealing = false
+                    end
+                end
+                task.wait(0.05)
+            end
+            
+            if toolChangeConn then toolChangeConn:Disconnect() end
+            HealBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+            HealBtn.Text = "HEAL"
+        end)
+    end
+end)
